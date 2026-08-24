@@ -1,0 +1,48 @@
+{
+  "name": "lynceus-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Lynceus — web search + URL→Markdown extraction for AI agents. RU-web-first, 4-tier anti-bot ladder, reader-mode Markdown.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "lynceus-mcp": "dist/cli.js",
+    "lyn-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --reporter=dot",
+    "prepublishOnly": "npm run build",
+    "start": "node dist/cli.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "search",
+    "extract",
+    "markdown",
+    "yandex",
+    "russian-web",
+    "anti-bot",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "cursor"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.7"
+  }
+}

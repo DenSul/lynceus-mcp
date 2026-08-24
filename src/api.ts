@@ -1,0 +1,120 @@
+/**
+ * Lynceus API client — thin typed wrapper over the REST surface.
+ *
+ * Auth: `Authorization: Bearer <LYNCEUS_API_KEY>`.
+ * Base URL: LYNCEUS_API_URL (default https://api.lynceus.ru).
+ */
+
+export interface LynceusSearchResult {
+  url: string;
+  title: string;
+  snippet: string;
+  rank: number;
+  engine?: string;
+  published_date?: string;
+  cached?: boolean;
+}
+
+export interface SearchParams {
+  query: string;
+  freshness?: 'time' | 'day' | 'week' | 'month';
+  max_results?: number;
+}
+
+export interface SearchResponse {
+  results: LynceusSearchResult[];
+  engine: string;
+  cached: boolean;
+  degraded?: boolean;
+}
+
+export interface LynceusExtractResult {
+  url: string;
+  url_normalized?: string;
+  status: string;
+  http_code?: number;
+  markdown: string;
+  chars?: number;
+  fetch_method?: string;
+  cached?: boolean;
+  error_code?: string;
+}
+
+export interface ExtractParams {
+  urls: string[];
+  allow_browser?: boolean;
+  allow_captcha?: boolean;
+  format?: 'markdown' | 'text';
+}
+
+export interface ExtractResponse {
+  results: LynceusExtractResult[];
+  credits_charged: number;
+  credits_remaining?: number;
+}
+
+export class LynceusApiError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    public retryable: boolean,
+  ) {
+    super(message);
+    this.name = 'LynceusApiError';
+  }
+}
+
+export interface ApiClient {
+  search(p: SearchParams, signal?: AbortSignal): Promise<SearchResponse>;
+  extract(p: ExtractParams, signal?: AbortSignal): Promise<ExtractResponse>;
+  usage(signal?: AbortSignal): Promise<{ credits_remaining?: number }>;
+}
+
+export function createClient(baseUrl?: string, apiKey?: string): ApiClient {
+  const base = (baseUrl ?? process.env.LYNCEUS_API_URL ?? 'https://api.lynceus.ru').replace(/\/+$/, '');
+  const key = apiKey ?? process.env.LYNCEUS_API_KEY ?? '';
+  const timeoutMs = Number(process.env.LYNCEUS_TIMEOUT_MS ?? 120_000);
+
+  async function call<T>(path: string, body: unknown, signal?: AbortSignal, method: 'POST' | 'GET' = 'POST'): Promise<T> {
+    const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+    if (signal) signal.addEventListener('abort', () => ac.abort(), { once: true });
+    let res: Response;
+    try {
+      res = await fetch(base + path, {
+        method,
+        headers: {
+          'content-type': 'application/json',
+          ...(key ? { authorization: `Bearer ${key}` } : {}),
+        },
+        body: JSON.stringify(body),
+        signal: ac.signal,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new LynceusApiError(0, 'network_error', `Lynceus unreachable at ${base}: ${msg}`, true);
+    } finally {
+      clearTimeout(timer);
+    }
+    const text = await res.text();
+    let parsed: any = undefined;
+    try { parsed = text ? JSON.parse(text) : undefined; } catch { /* non-JSON error body */ }
+    if (!res.ok) {
+      const err = parsed?.error;
+      throw new LynceusApiError(
+        res.status,
+        err?.code ?? `http_${res.status}`,
+        err?.message ?? `HTTP ${res.status}`,
+        Boolean(err?.retryable),
+      );
+    }
+    return parsed as T;
+  }
+
+  return {
+    search: (p, signal) => call<SearchResponse>('/v1/search', p, signal),
+    extract: (p, signal) => call<ExtractResponse>('/v1/extract', p, signal),
+    usage: (signal) => call<{ credits_remaining?: number }>('/v1/usage', undefined, signal, 'GET'),
+  };
+}
