@@ -71,10 +71,14 @@ export function formatSearch(res: {
   cached?: boolean;
 }): string {
   if (!res.results.length) return 'No results. Try rephrasing the query or widening freshness.';
-  const lines = res.results.map(
-    (r) =>
-      `${r.rank}. ${r.title}\n   ${r.url}${r.published_date ? `\n   published: ${r.published_date}` : ''}\n   ${r.snippet}`,
-  );
+  const lines = res.results.map((r) => {
+    // Titles and snippets are untrusted web content, same as page
+    // bodies: strip invisible chars / role markers before they reach
+    // the model's context (see sanitize.ts).
+    const title = sanitizeUntrusted(r.title, 300);
+    const snippet = sanitizeUntrusted(r.snippet, 1_000);
+    return `${r.rank}. ${title}\n   ${r.url}${r.published_date ? `\n   published: ${r.published_date}` : ''}\n   ${snippet}`;
+  });
   return `${res.results.length} result(s)${res.engine ? ` (engine: ${res.engine})` : ''}${res.cached ? ' [cached]' : ''}\n\n${lines.join('\n\n')}`;
 }
 
