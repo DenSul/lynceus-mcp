@@ -1,7 +1,7 @@
 {
   "name": "lynceus-mcp",
   "version": "1.0.0",
-  "description": "MCP server for Lynceus — web search + URL→Markdown extraction for AI agents. RU-web-first, 4-tier anti-bot ladder, reader-mode Markdown.",
+  "description": "MCP server for Lynceus \u2014 web search + URL\u2192Markdown extraction for AI agents. RU-web-first.",
   "license": "MIT",
   "type": "module",
   "bin": {
