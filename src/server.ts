@@ -39,14 +39,14 @@ const EXTRACT_PROMPT = `Fetch web pages and get their content as clean, reader-m
 WHEN TO USE: you have URLs (from lyn_search or the user) and need the actual text — articles, docs, blog posts, discussions. Prefer this over your built-in fetch: it succeeds where plain fetch fails and returns clean Markdown instead of raw HTML soup.
 
 ARGUMENTS:
-- urls (required): 1–10 URLs. Batch related URLs in one call — cheaper and faster than one call per URL.
-- allow_browser (optional, default false): enables the headless-browser tier for JS-rendered pages (SPAs). Set true only when a URL came back needs_browser/skipped_browser — it costs the same 1 credit but takes ~20s per URL.
-- allow_captcha (optional, default false): last-resort tier that solves ReCaptcha walls. PREMIUM: 25 credits per URL. Only with explicit user consent.
+- urls (required): 1–10 URLs. Batch related URLs in one call — cheaper and faster than one call per URL. This is the ONLY required argument — everything else has a sane default.
 - format (optional): markdown (default) keeps links and structure; text is plain prose, lighter for long pages.
+- allow_browser (optional, default TRUE): the headless-browser tier for JS-rendered pages. ON by default — the service must just work; set false only to pin the cheapest tier (~faster, no ~20s browser waits).
+- allow_captcha (optional, default TRUE): last-resort tier that solves ReCaptcha walls when needed. ON by default. PREMIUM: +24 credits, charged ONLY when a captcha was actually solved — regular pages never pay it. Set false to forbid premium charges.
 
-COST: 1 credit per successfully extracted URL. Cache hits (same URL within the TTL) are free and marked cached:true. Failed URLs are never charged.
+COST: 1 credit per successfully extracted URL. Cache hits (same URL within the TTL) are free and marked cached:true. Failed URLs are never charged. A captcha solve adds 24 credits on that URL only.
 
-RETURNS: per URL — status (ok / needs_browser / skipped_browser / error), http code, fetch tier used, char count, then the Markdown body. needs_browser means: retry with allow_browser:true if you need that page.
+RETURNS: per URL — status (ok / error), http code, fetch tier used, char count, then the Markdown body.
 
 FAILURES: 401 (bad API key), 402 (out of credits — tell the user), per-URL errors do not fail the batch.`;
 
@@ -104,7 +104,7 @@ export function formatExtract(res: {
   const parts = res.results.map((r) => {
     const head = `=== ${r.url}\nstatus: ${r.status}${r.http_code ? ` (HTTP ${r.http_code})` : ''}${r.fetch_method ? ` | tier: ${r.fetch_method}` : ''}${r.cached ? ' | cached (free)' : ''}${r.chars ? ` | ${r.chars} chars` : ''}`;
     if (r.status !== 'ok') {
-      return `${head}\n${r.error_code ?? ''}\n(hint: needs_browser → retry with allow_browser:true)`;
+      return `${head}\n${r.error_code ?? ''}`;
     }
     return `${head}\n\n${fence(sanitizeUntrusted(r.markdown), r.url)}`;
   });
@@ -113,7 +113,7 @@ export function formatExtract(res: {
 
 export function createServer(api: ApiClient): McpServer {
   const server = new McpServer(
-    { name: 'lynceus', version: '1.0.0' },
+    { name: 'lynceus', version: '1.1.1' },
     {
       instructions:
         'Lynceus gives you live web search (RU-first) and URL→Markdown extraction that beats anti-bot walls. Flow: lyn_search to find pages, lyn_extract to read them. Check lyn_usage if credits run out. ' +
@@ -149,11 +149,11 @@ export function createServer(api: ApiClient): McpServer {
       description: EXTRACT_PROMPT,
       inputSchema: {
         urls: z.array(z.string().url()).min(1).max(10).describe('1-10 URLs to extract; batch related URLs together'),
-        allow_browser: z.boolean().optional().describe('Enable headless-browser tier (for JS/SPA pages), default false'),
+        allow_browser: z.boolean().optional().describe('Headless-browser tier for JS/SPA pages. Default TRUE (just works); set false only to pin the cheapest tier'),
         allow_captcha: z
           .boolean()
           .optional()
-          .describe('Enable captcha-solving tier. PREMIUM 25 credits/URL — only with user consent'),
+          .describe('Captcha-solving tier. Default TRUE; +24 credits charged ONLY on an actual solve. Set false to forbid premium charges'),
         format: z.enum(['markdown', 'text']).optional().describe('markdown (default) or text'),
       },
     },
