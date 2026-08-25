@@ -21,6 +21,19 @@ const args = process.argv.slice(2);
 const useHttp = args.includes('--http');
 const port = Number(process.env.PORT ?? 8082);
 
+// DNS-rebinding guard for the HTTP transport: the server binds
+// loopback, but a page on evil.com can still point "evil.com" at
+// 127.0.0.1 in the public DNS and make the browser POST here. Browsers
+// always send a Host header; reject anything outside the allowlist.
+// Stdio is unaffected (no socket).
+const HOST_ALLOWLIST = new Set([
+  'localhost',
+  '127.0.0.1',
+  `[::1]:${port}`,
+  `localhost:${port}`,
+  `127.0.0.1:${port}`,
+]);
+
 const api = createClient();
 const mcp = createMcp(api);
 
@@ -30,6 +43,12 @@ if (useHttp) {
     '@modelcontextprotocol/sdk/server/streamableHttp.js'
   );
   const server = createServer(async (req, res) => {
+    if (!HOST_ALLOWLIST.has(req.headers.host ?? '')) {
+      res.statusCode = 403;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ error: 'host not allowed' }));
+      return;
+    }
     if (req.method === 'POST' && req.url === '/mcp') {
       try {
         const transport = new StreamableHTTPServerTransport({
@@ -51,8 +70,8 @@ if (useHttp) {
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ error: 'MCP endpoint is POST /mcp' }));
   });
-  server.listen(port, () => {
-    console.error(`lynceus-mcp: HTTP transport on :${port} (POST /mcp)`);
+  server.listen(port, '127.0.0.1', () => {
+    console.error(`lynceus-mcp: HTTP transport on 127.0.0.1:${port} (POST /mcp)`);
   });
 } else {
   const transport = new StdioServerTransport();
