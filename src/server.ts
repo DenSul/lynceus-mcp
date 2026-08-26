@@ -111,7 +111,7 @@ export function formatExtract(res: {
 
 export function createServer(api: ApiClient): McpServer {
   const server = new McpServer(
-    { name: 'lynceus', version: '1.1.1' },
+    { name: 'lynceus', version: '1.1.2' },
     {
       instructions:
         'Lynceus gives you live web search (RU-first) and URL→Markdown extraction that beats anti-bot walls. Flow: lyn_search to find pages, lyn_extract to read them. Check lyn_usage if credits run out. ' +
