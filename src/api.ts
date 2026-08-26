@@ -35,6 +35,8 @@ export interface LynceusExtractResult {
   chars?: number;
   cached?: boolean;
   error_code?: string;
+  truncated?: boolean;
+  next_offset?: number;
 }
 
 export interface ExtractParams {
@@ -42,6 +44,8 @@ export interface ExtractParams {
   allow_browser?: boolean;
   allow_captcha?: boolean;
   format?: 'markdown' | 'text';
+  max_chars?: number;
+  offset?: number;
 }
 
 export interface ExtractResponse {
@@ -74,39 +78,57 @@ export function createClient(baseUrl?: string, apiKey?: string): ApiClient {
   const timeoutMs = Number(process.env.LYNCEUS_TIMEOUT_MS ?? 120_000);
 
   async function call<T>(path: string, body: unknown, signal?: AbortSignal, method: 'POST' | 'GET' = 'POST'): Promise<T> {
-    const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-    if (signal) signal.addEventListener('abort', () => ac.abort(), { once: true });
-    let res: Response;
-    try {
-      res = await fetch(base + path, {
-        method,
-        headers: {
-          'content-type': 'application/json',
-          ...(key ? { authorization: `Bearer ${key}` } : {}),
-        },
-        body: JSON.stringify(body),
-        signal: ac.signal,
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new LynceusApiError(0, 'network_error', `Lynceus unreachable at ${base}: ${msg}`, true);
-    } finally {
-      clearTimeout(timer);
+    const maxAttempts = Number(process.env.LYNCEUS_RETRIES ?? 2); // 1 try + 1 retry on retryable failures
+    let lastErr: LynceusApiError | undefined;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), timeoutMs);
+      if (signal) signal.addEventListener('abort', () => ac.abort(), { once: true });
+      let res: Response;
+      try {
+        res = await fetch(base + path, {
+          method,
+          headers: {
+            'content-type': 'application/json',
+            ...(key ? { authorization: `Bearer ${key}` } : {}),
+          },
+          body: JSON.stringify(body),
+          signal: ac.signal,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        lastErr = new LynceusApiError(0, 'network_error', `Lynceus unreachable at ${base}: ${msg}`, true);
+        if (attempt < maxAttempts && (signal?.aborted !== true)) {
+          await new Promise((r) => setTimeout(r, 500 * attempt));
+          continue;
+        }
+        throw lastErr;
+      } finally {
+        clearTimeout(timer);
+      }
+      const text = await res.text();
+      let parsed: any = undefined;
+      try { parsed = text ? JSON.parse(text) : undefined; } catch { /* non-JSON error body */ }
+      if (!res.ok) {
+        const err = parsed?.error;
+        const apiErr = new LynceusApiError(
+          res.status,
+          err?.code ?? `http_${res.status}`,
+          err?.message ?? `HTTP ${res.status}`,
+          Boolean(err?.retryable),
+        );
+        // Retry only what the API declares retryable (timeout / 502 /
+        // 504); 4xx (auth, credits, validation) fail fast.
+        if (apiErr.retryable && attempt < maxAttempts) {
+          lastErr = apiErr;
+          await new Promise((r) => setTimeout(r, 500 * attempt));
+          continue;
+        }
+        throw apiErr;
+      }
+      return parsed as T;
     }
-    const text = await res.text();
-    let parsed: any = undefined;
-    try { parsed = text ? JSON.parse(text) : undefined; } catch { /* non-JSON error body */ }
-    if (!res.ok) {
-      const err = parsed?.error;
-      throw new LynceusApiError(
-        res.status,
-        err?.code ?? `http_${res.status}`,
-        err?.message ?? `HTTP ${res.status}`,
-        Boolean(err?.retryable),
-      );
-    }
-    return parsed as T;
+    throw lastErr ?? new LynceusApiError(0, 'unreachable', 'Lynceus unreachable', true);
   }
 
   return {

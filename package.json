@@ -1,6 +1,6 @@
 {
   "name": "lynceus-mcp",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "MCP server for Lynceus — web search + URL→Markdown extraction for AI agents. RU-web-first.",
   "license": "MIT",
   "type": "module",

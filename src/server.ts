@@ -41,6 +41,8 @@ WHEN TO USE: you have URLs (from lyn_search or the user) and need the actual tex
 ARGUMENTS:
 - urls (required): 1–10 URLs. Batch related URLs in one call — cheaper and faster than one call per URL. This is the ONLY required argument — everything else has a sane default.
 - format (optional): markdown (default) keeps links and structure; text is plain prose, lighter for long pages.
+- max_chars (optional): cap the returned body per URL. When the page is longer, the result carries truncated:true and next_offset:N — call again with offset:N to get the continuation (cached, effectively free).
+- offset (optional): skip the first N chars of the document — continuation cursor from a previous next_offset.
 - allow_browser (optional, default TRUE): renders JS-heavy pages in a real browser. ON by default — the service must just work; set false only for the fastest/cheapest path (~faster, no ~15s browser waits).
 - allow_captcha (optional, default TRUE): solves hard bot-walls when needed. ON by default. PREMIUM: +24 credits, charged ONLY when a wall was actually solved — regular pages never pay it. Set false to forbid premium charges.
 
@@ -48,7 +50,7 @@ COST: 1 credit per successfully extracted URL. Cache hits (same URL within the T
 
 RETURNS: per URL — status (ok / error), http code, char count, then the Markdown body.
 
-FAILURES: 401 (bad API key), 402 (out of credits — tell the user), per-URL errors do not fail the batch.`;
+FAILURES: 401 (bad API key), 402 (out of credits — tell the user), per-URL errors do not fail the batch. Per-URL error codes: http_404 (dead link — do not retry), dns_error (bad domain), http_403/blocked (bot wall), paywall, timeout (retry later).`;
 
 const USAGE_PROMPT = `Check the Lynceus account's remaining credits. Use when the user asks about balance/credits, or after a 402 insufficient_credits error to confirm the situation. Free; no side effects.`;
 
@@ -97,10 +99,12 @@ export function formatExtract(res: {
     cached?: boolean;
     markdown: string;
     error_code?: string;
+    truncated?: boolean;
+    next_offset?: number;
   }[];
 }): string {
   const parts = res.results.map((r) => {
-    const head = `=== ${r.url}\nstatus: ${r.status}${r.http_code ? ` (HTTP ${r.http_code})` : ''}${r.cached ? ' | cached (free)' : ''}${r.chars ? ` | ${r.chars} chars` : ''}`;
+    const head = `=== ${r.url}\nstatus: ${r.status}${r.http_code ? ` (HTTP ${r.http_code})` : ''}${r.cached ? ' | cached (free)' : ''}${r.chars ? ` | ${r.chars} chars` : ''}${r.truncated && r.next_offset ? ` | TRUNCATED — call again with offset:${r.next_offset} for the rest` : ''}`;
     if (r.status !== 'ok') {
       return `${head}\n${r.error_code ?? ''}`;
     }
@@ -111,7 +115,7 @@ export function formatExtract(res: {
 
 export function createServer(api: ApiClient): McpServer {
   const server = new McpServer(
-    { name: 'lynceus', version: '1.1.2' },
+    { name: 'lynceus', version: '1.2.0' },
     {
       instructions:
         'Lynceus gives you live web search (RU-first) and URL→Markdown extraction that beats anti-bot walls. Flow: lyn_search to find pages, lyn_extract to read them. Check lyn_usage if credits run out. ' +
@@ -153,11 +157,13 @@ export function createServer(api: ApiClient): McpServer {
           .optional()
           .describe('Captcha-solving tier. Default TRUE; +24 credits charged ONLY on an actual solve. Set false to forbid premium charges'),
         format: z.enum(['markdown', 'text']).optional().describe('markdown (default) or text'),
+        max_chars: z.number().int().min(1).optional().describe('Cap body length per URL; truncated results carry next_offset for continuation'),
+        offset: z.number().int().min(0).optional().describe('Continuation cursor from a previous next_offset (skips first N chars)'),
       },
     },
-    async ({ urls, allow_browser, allow_captcha, format }) => {
+    async ({ urls, allow_browser, allow_captcha, format, max_chars, offset }) => {
       try {
-        const res = await api.extract({ urls, allow_browser, allow_captcha, format });
+        const res = await api.extract({ urls, allow_browser, allow_captcha, format, max_chars, offset });
         return textResult(formatExtract(res));
       } catch (e) {
         return { isError: true, ...textResult(fmtApiError(e)) };
