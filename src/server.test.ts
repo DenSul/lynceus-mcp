@@ -14,7 +14,6 @@ function fakeApi(): ApiClient & { searchCalls: any[]; extractCalls: any[] } {
     async search(p) {
       searchCalls.push(p);
       return {
-        engine: 'yandex',
         cached: false,
         results: [
           { url: 'https://example.com/a', title: 'Статья A', snippet: 'про го', rank: 1, published_date: '2026-08-20T00:00:00Z' },
@@ -76,7 +75,7 @@ describe('lynceus MCP server', () => {
     expect(api.searchCalls[0]).toMatchObject({ query: 'go gin' });
   });
 
-  it('extract returns markdown body with tier info', async () => {
+  it('extract returns markdown body without internal tier info', async () => {
     const api = fakeApi();
     const client = await connect(api);
     const res = await client.callTool({
@@ -85,7 +84,8 @@ describe('lynceus MCP server', () => {
     });
     const text = (res.content as any[])[0].text as string;
     expect(text).toContain('=== https://example.com/a');
-    expect(text).toContain('tier: tier1');
+    expect(text).not.toContain('tier:');
+    expect(text).not.toContain('engine:');
     expect(text).toContain('# Заголовок');
     expect(api.extractCalls[0]).toMatchObject({ urls: ['https://example.com/a'], allow_browser: true });
   });

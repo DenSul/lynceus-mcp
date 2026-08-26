@@ -5,7 +5,7 @@
 
 Web search and URL→Markdown extraction for AI agents. RU-web-first, anti-bot hardened, clean reader-mode output.
 
-- `lyn_search` — live web search via the Yandex index, freshness filter
+- `lyn_search` — live web search (RU-web-first), freshness filter
 - `lyn_extract` — URLs → clean Markdown; gets through where plain fetch gets a 403
 - `lyn_usage` — remaining credits
 

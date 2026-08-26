@@ -10,7 +10,6 @@ export interface LynceusSearchResult {
   title: string;
   snippet: string;
   rank: number;
-  engine?: string;
   published_date?: string;
   cached?: boolean;
 }
@@ -23,7 +22,6 @@ export interface SearchParams {
 
 export interface SearchResponse {
   results: LynceusSearchResult[];
-  engine: string;
   cached: boolean;
   degraded?: boolean;
 }
@@ -35,7 +33,6 @@ export interface LynceusExtractResult {
   http_code?: number;
   markdown: string;
   chars?: number;
-  fetch_method?: string;
   cached?: boolean;
   error_code?: string;
 }

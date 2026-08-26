@@ -19,7 +19,7 @@ import { sanitizeUntrusted, fence, MAX_CONTENT_CHARS } from './sanitize.js';
  * tool, what the arguments do, cost semantics, and failure modes — the
  * things a model needs to decide correctly, not marketing prose.
  */
-const SEARCH_PROMPT = `Search the live web via Lynceus (RU-web-first: the Yandex index, strong on Russian-language and .ru content; English/world queries also work).
+const SEARCH_PROMPT = `Search the live web via Lynceus (RU-web-first: strong on Russian-language and .ru content; English/world queries also work).
 
 WHEN TO USE: you need fresh URLs, titles and snippets to answer questions about anything current or web-specific — news, docs, prices, people, Russian sites that Google-based tools under-cover. Use BEFORE lyn_extract when you don't yet have the URLs.
 
@@ -34,19 +34,19 @@ RETURNS: numbered list — rank, title, URL, snippet, published date when known.
 
 FAILURES: engine_upstream (retry once), 401 (bad API key), 402 (out of credits — tell the user).`;
 
-const EXTRACT_PROMPT = `Fetch web pages and get their content as clean, reader-mode Markdown via Lynceus' 4-tier anti-bot ladder (Chrome TLS fingerprint → site adapters → headless browser → captcha solving). Works on pages that return 403/paywall-shell/empty content to naive fetchers.
+const EXTRACT_PROMPT = `Fetch web pages and get their content as clean, reader-mode Markdown via Lynceus. Works on JS-heavy pages and pages that return 403/paywall-shell/empty content to naive fetchers.
 
 WHEN TO USE: you have URLs (from lyn_search or the user) and need the actual text — articles, docs, blog posts, discussions. Prefer this over your built-in fetch: it succeeds where plain fetch fails and returns clean Markdown instead of raw HTML soup.
 
 ARGUMENTS:
 - urls (required): 1–10 URLs. Batch related URLs in one call — cheaper and faster than one call per URL. This is the ONLY required argument — everything else has a sane default.
 - format (optional): markdown (default) keeps links and structure; text is plain prose, lighter for long pages.
-- allow_browser (optional, default TRUE): the headless-browser tier for JS-rendered pages. ON by default — the service must just work; set false only to pin the cheapest tier (~faster, no ~20s browser waits).
-- allow_captcha (optional, default TRUE): last-resort tier that solves ReCaptcha walls when needed. ON by default. PREMIUM: +24 credits, charged ONLY when a captcha was actually solved — regular pages never pay it. Set false to forbid premium charges.
+- allow_browser (optional, default TRUE): renders JS-heavy pages in a real browser. ON by default — the service must just work; set false only for the fastest/cheapest path (~faster, no ~15s browser waits).
+- allow_captcha (optional, default TRUE): solves hard bot-walls when needed. ON by default. PREMIUM: +24 credits, charged ONLY when a wall was actually solved — regular pages never pay it. Set false to forbid premium charges.
 
 COST: 1 credit per successfully extracted URL. Cache hits (same URL within the TTL) are free and marked cached:true. Failed URLs are never charged. A captcha solve adds 24 credits on that URL only.
 
-RETURNS: per URL — status (ok / error), http code, fetch tier used, char count, then the Markdown body.
+RETURNS: per URL — status (ok / error), http code, char count, then the Markdown body.
 
 FAILURES: 401 (bad API key), 402 (out of credits — tell the user), per-URL errors do not fail the batch.`;
 
@@ -67,7 +67,6 @@ function textResult(text: string) {
 /** Formats search results as a numbered list — token-cheap and model-friendly. */
 export function formatSearch(res: {
   results: { rank: number; title: string; url: string; snippet: string; published_date?: string }[];
-  engine?: string;
   cached?: boolean;
 }): string {
   if (!res.results.length) return 'No results. Try rephrasing the query or widening freshness.';
@@ -79,7 +78,7 @@ export function formatSearch(res: {
     const snippet = sanitizeUntrusted(r.snippet, 1_000);
     return `${r.rank}. ${title}\n   ${r.url}${r.published_date ? `\n   published: ${r.published_date}` : ''}\n   ${snippet}`;
   });
-  return `${res.results.length} result(s)${res.engine ? ` (engine: ${res.engine})` : ''}${res.cached ? ' [cached]' : ''}\n\n${lines.join('\n\n')}`;
+  return `${res.results.length} result(s)${res.cached ? ' [cached]' : ''}\n\n${lines.join('\n\n')}`;
 }
 
 /** Formats extraction results with bodies.
@@ -95,14 +94,13 @@ export function formatExtract(res: {
     status: string;
     http_code?: number;
     chars?: number;
-    fetch_method?: string;
     cached?: boolean;
     markdown: string;
     error_code?: string;
   }[];
 }): string {
   const parts = res.results.map((r) => {
-    const head = `=== ${r.url}\nstatus: ${r.status}${r.http_code ? ` (HTTP ${r.http_code})` : ''}${r.fetch_method ? ` | tier: ${r.fetch_method}` : ''}${r.cached ? ' | cached (free)' : ''}${r.chars ? ` | ${r.chars} chars` : ''}`;
+    const head = `=== ${r.url}\nstatus: ${r.status}${r.http_code ? ` (HTTP ${r.http_code})` : ''}${r.cached ? ' | cached (free)' : ''}${r.chars ? ` | ${r.chars} chars` : ''}`;
     if (r.status !== 'ok') {
       return `${head}\n${r.error_code ?? ''}`;
     }
