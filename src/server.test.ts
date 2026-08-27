@@ -5,12 +5,14 @@ import { createServer } from './server.js';
 import type { ApiClient } from './api.js';
 import { formatSearch } from './server.js';
 
-function fakeApi(): ApiClient & { searchCalls: any[]; extractCalls: any[] } {
+function fakeApi(): ApiClient & { searchCalls: any[]; extractCalls: any[]; researchCalls: any[] } {
   const searchCalls: any[] = [];
   const extractCalls: any[] = [];
+  const researchCalls: any[] = [];
   return {
     searchCalls,
     extractCalls,
+    researchCalls,
     async search(p) {
       searchCalls.push(p);
       return {
@@ -40,6 +42,27 @@ function fakeApi(): ApiClient & { searchCalls: any[]; extractCalls: any[] } {
     async usage() {
       return { credits_remaining: 299 };
     },
+    async research(p) {
+      researchCalls.push(p);
+      if (p.wait === false) {
+        return { job_id: 'job-test-1', status: 'queued' };
+      }
+      return {
+        job_id: 'job-test-1',
+        status: 'done',
+        result: {
+          report: {
+            complete: true,
+            markdown: '# Отчёт\nфакт [1]',
+            queries_used: 4,
+            urls_read: 12,
+            prompt_tokens: 100,
+            completion_tokens: 50,
+          },
+          credits_charged: 300,
+        },
+      };
+    },
   };
 }
 
@@ -57,9 +80,9 @@ describe('lynceus MCP server', () => {
     const client = await connect(fakeApi());
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
-    expect(names).toEqual(['lyn_search', 'lyn_extract', 'lyn_usage']);
+    expect(names).toEqual(['lyn_search', 'lyn_extract', 'lyn_usage', 'lyn_research']);
     for (const t of tools) {
-      if (t.name === 'lyn_usage') continue;
+      if (t.name === 'lyn_usage' || t.name === 'lyn_research') continue;
       expect(t.description!.length).toBeGreaterThan(300); // prompts must be substantial
     }
   });
@@ -140,5 +163,28 @@ describe('formatSearch sanitization', () => {
     expect(res).toContain('[filtered]');
     // legitimate mid-line wording survives (zero false positives)
     expect(res).toContain('Article about security');
+  });
+});
+
+describe('lyn_research', () => {
+  it('submits with wait=false and returns job_id', async () => {
+    const api = fakeApi();
+    const client = await connect(api);
+    const res = await client.callTool({ name: 'lyn_research', arguments: { query: 'рынок VPN 2026', wait: false } });
+    const text = (res.content as { text: string }[])[0].text;
+    expect(text).toContain('job-test-1');
+    expect(text).toContain('queued');
+    expect(api.researchCalls[0].query).toBe('рынок VPN 2026');
+  });
+
+  it('waits and renders the full report', async () => {
+    const api = fakeApi();
+    const client = await connect(api);
+    const res = await client.callTool({ name: 'lyn_research', arguments: { query: 'сравни sqlite и postgres' } });
+    const text = (res.content as { text: string }[])[0].text;
+    expect(text).toContain('complete: true');
+    expect(text).toContain('pages: 12');
+    expect(text).toContain('credits: 300 charged');
+    expect(text).toContain('# Отчёт');
   });
 });
