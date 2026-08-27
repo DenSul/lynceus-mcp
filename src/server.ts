@@ -129,7 +129,7 @@ export function formatExtract(res: {
 
 export function createServer(api: ApiClient): McpServer {
   const server = new McpServer(
-    { name: 'lynceus', version: '1.3.0' },
+    { name: 'lynceus', version: '1.3.1' },
     {
       instructions:
         'Lynceus gives you live web search (RU-first), URL→Markdown extraction that beats anti-bot walls, and deep research (lyn_research: one question → cited report). Flow: lyn_search to find pages, lyn_extract to read them; for synthesis-heavy questions use lyn_research instead of many search+extract rounds. Check lyn_usage if credits run out. ' +
@@ -212,11 +212,36 @@ export function createServer(api: ApiClient): McpServer {
         wait: z.boolean().optional().describe('Block until the report is ready (default true). false → job_id + poll instructions immediately'),
       },
     },
-    async ({ query, wait }) => {
+    async ({ query, wait }, extra) => {
       try {
-        const st = await api.research({ query, wait });
+        // Submit is ALWAYS fast; the wait phase below keeps the client
+        // alive with progress notifications. A plain blocking call dies
+        // at the client's request timeout (~60s in most MCP clients)
+        // while the job keeps running server-side — the caller loses
+        // the job_id and the credits (field report 2026-08-27).
+        const submitted = await api.researchSubmit(query, extra?.signal);
+        if (wait === false) {
+          return textResult(formatResearch({ job_id: submitted.job_id, status: 'queued' }));
+        }
+        const st = await api.researchWait(submitted.job_id, extra?.signal, (elapsedS, status, lastStep) => {
+          // Progress notifications reset the client's idle/timeout
+          // timers (notifications/progress is the MCP-blessed way).
+          void extra.sendNotification({
+            method: 'notifications/progress',
+            params: { progressToken: (extra?._meta?.progressToken ?? extra.requestId) as string | number, progress: elapsedS, message: `research ${status}${lastStep ? `: ${lastStep}` : ''}` },
+          }).catch(() => {});
+        });
         return textResult(formatResearch(st));
       } catch (e) {
+        // Client cancelled mid-wait: the job KEEPS RUNNING server-side.
+        // Hand back the job_id so the caller can poll instead of
+        // paying blind — the credit hold is not lost with the call.
+        if (e instanceof Error && extra?.signal?.aborted) {
+          const m = /job (\S+) still/.exec(e.message);
+          if (m) {
+            return textResult(`client cancelled while waiting; job ${m[1]} is still running server-side — poll GET /v1/research/jobs/${m[1]} until done, credits are held by that job`);
+          }
+        }
         return { isError: true, ...textResult(fmtApiError(e)) };
       }
     },

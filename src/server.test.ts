@@ -42,13 +42,14 @@ function fakeApi(): ApiClient & { searchCalls: any[]; extractCalls: any[]; resea
     async usage() {
       return { credits_remaining: 299 };
     },
-    async research(p) {
-      researchCalls.push(p);
-      if (p.wait === false) {
-        return { job_id: 'job-test-1', status: 'queued' };
-      }
+    async researchSubmit(query) {
+      researchCalls.push({ query });
+      return { job_id: 'job-test-1', status: 'queued', credits_held: 300 };
+    },
+    async researchWait(jobId, _signal, onProgress) {
+      if (onProgress) onProgress(25, 'running', 'extract: example.com');
       return {
-        job_id: 'job-test-1',
+        job_id: jobId,
         status: 'done',
         result: {
           report: {
@@ -62,6 +63,13 @@ function fakeApi(): ApiClient & { searchCalls: any[]; extractCalls: any[]; resea
           credits_charged: 300,
         },
       };
+    },
+    async research(p) {
+      researchCalls.push(p);
+      if (p.wait === false) {
+        return { job_id: 'job-test-1', status: 'queued' };
+      }
+      return this instanceof Object ? (await this.researchWait('job-test-1', undefined)) : { job_id: 'job-test-1', status: 'done' };
     },
   };
 }

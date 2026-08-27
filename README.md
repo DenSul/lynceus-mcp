@@ -8,6 +8,8 @@ Web search and URL→Markdown extraction for AI agents. RU-web-first, anti-bot h
 - `lyn_search` — live web search (RU-web-first), freshness filter
 - `lyn_extract` — URLs → clean Markdown; gets through where plain fetch gets a 403
 - `lyn_research` — deep research: one question → Lynceus plans queries, reads up to 12 pages and synthesizes a cited Markdown report (300 credits; refunded if synthesis fails; async job with live progress)
+
+> **Clients with hard tool-call timeouts (opencode, ~60s):** call `lyn_research` with `wait: false` and poll `GET /v1/research/jobs/<job_id>`. The default blocking mode emits MCP progress notifications every 20s, which resets the timeout in spec-compliant clients (Claude Code, Cursor) — but opencode kills the request regardless, and the job keeps running server-side (credits are held by the job, the report is not lost).
 - `lyn_usage` — remaining credits
 
 ## Install
