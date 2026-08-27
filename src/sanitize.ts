@@ -42,6 +42,21 @@ const TEMPLATE_TOKENS = [
 /** Default cap for one page's markdown inside a tool result. */
 export const MAX_CONTENT_CHARS = 48_000;
 
+/**
+ * The fence markers themselves must never occur inside fenced content:
+ * a page containing a literal "<<<END_WEB_CONTENT>>>" would close the
+ * fence early and make everything after it read as operator text
+ * (verified as a real breakout, 2026-08-27 audit). The patterns match
+ * generously (any "<<<" run that starts a fence-like marker) and are
+ * replaced with a visibly mangled stub.
+ */
+const FENCE_MARKER = /<<<[^<]*?WEB_CONTENT[^<]*?(?:>>>|$)/gi;
+
+/** Neutralize fence delimiters inside untrusted text. */
+export function defuseFenceMarkers(s: string): string {
+  return s.replace(FENCE_MARKER, '[filtered-fence]');
+}
+
 export function stripInvisible(s: string): string {
   return s.replace(INVISIBLE, '');
 }
@@ -65,7 +80,7 @@ export function capLength(s: string, max = MAX_CONTENT_CHARS): string {
 
 /** Full pipeline for one extracted page. */
 export function sanitizeUntrusted(s: string, max = MAX_CONTENT_CHARS): string {
-  return capLength(defuseMarkers(stripInvisible(s)), max);
+  return capLength(defuseFenceMarkers(defuseMarkers(stripInvisible(s))), max);
 }
 
 /**
