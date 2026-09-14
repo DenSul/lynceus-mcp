@@ -84,8 +84,9 @@ function textResult(text: string) {
 export function formatSearch(res: {
   results: { rank: number; title: string; url: string; snippet: string; published_date?: string }[];
   cached?: boolean;
+  widened?: boolean;
 }): string {
-  if (!res.results.length) return 'No results. Try rephrasing the query or widening freshness.';
+  if (!res.results.length) return 'No results. Try rephrasing the query.';
   const lines = res.results.map((r) => {
     // Titles and snippets are untrusted web content, same as page
     // bodies: strip invisible chars / role markers before they reach
@@ -94,7 +95,10 @@ export function formatSearch(res: {
     const snippet = sanitizeUntrusted(r.snippet, 1_000);
     return `${r.rank}. ${title}\n   ${r.url}${r.published_date ? `\n   published: ${r.published_date}` : ''}\n   ${snippet}`;
   });
-  return `${res.results.length} result(s)${res.cached ? ' [cached]' : ''}\n\n${lines.join('\n\n')}`;
+  // widened: the freshness window was empty; these results span a
+  // wider window than requested (dates may be older than asked).
+  const flag = res.widened ? ' [WIDENED: freshness window empty, results from a wider time range]' : '';
+  return `${res.results.length} result(s)${res.cached ? ' [cached]' : ''}${flag}\n\n${lines.join('\n\n')}`;
 }
 
 /** Formats extraction results with bodies.
@@ -129,7 +133,7 @@ export function formatExtract(res: {
 
 export function createServer(api: ApiClient): McpServer {
   const server = new McpServer(
-    { name: 'lynceus', version: '1.3.2' },
+    { name: 'lynceus', version: '1.4.0' },
     {
       instructions:
         'Lynceus gives you live web search (RU-first), URL→Markdown extraction that beats anti-bot walls, and deep research (lyn_research: one question → cited report). Flow: lyn_search to find pages, lyn_extract to read them; for synthesis-heavy questions use lyn_research instead of many search+extract rounds. Check lyn_usage if credits run out. ' +
