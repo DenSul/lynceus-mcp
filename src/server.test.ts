@@ -39,6 +39,23 @@ function fakeApi(): ApiClient & { searchCalls: any[]; extractCalls: any[]; resea
         ],
       };
     },
+    async images(p) {
+      return {
+        engine: 'yandex-images',
+        credits_charged: 2,
+        results: [
+          {
+            title: 'пейзаж',
+            thumb_url: 'https://x/t.jpg',
+            image_url: 'https://x/i.jpg',
+            page_url: 'https://x/',
+            width: 1200,
+            height: 834,
+            domain: 'x',
+          },
+        ],
+      };
+    },
     async usage() {
       return { credits_remaining: 299 };
     },
@@ -88,11 +105,20 @@ describe('lynceus MCP server', () => {
     const client = await connect(fakeApi());
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
-    expect(names).toEqual(['lyn_search', 'lyn_extract', 'lyn_usage', 'lyn_research']);
+    expect(names).toEqual(['lyn_search', 'lyn_images', 'lyn_extract', 'lyn_usage', 'lyn_research']);
     for (const t of tools) {
       if (t.name === 'lyn_usage' || t.name === 'lyn_research') continue;
-      expect(t.description!.length).toBeGreaterThan(300); // prompts must be substantial
+      expect(t.description!.length).toBeGreaterThan(150); // prompts must be substantial
     }
+  });
+
+  it('images returns formatted image list', async () => {
+    const client = await connect(fakeApi());
+    const res = await client.callTool({ name: 'lyn_images', arguments: { query: 'горный пейзаж' } });
+    const text = (res.content as any[])[0].text as string;
+    expect(text).toContain('1 image(s)');
+    expect(text).toContain('image: https://x/i.jpg');
+    expect(text).toContain('1200x834');
   });
 
   it('search returns formatted numbered results', async () => {

@@ -54,6 +54,33 @@ export interface ExtractResponse {
   credits_remaining?: number;
 }
 
+// --- image search ----------------------------------------------------------
+
+export interface LynceusImageResult {
+  title: string;
+  thumb_url: string;
+  image_url: string;
+  page_url: string;
+  width: number;
+  height: number;
+  file_size?: number;
+  mime_type?: string;
+  domain: string;
+}
+
+export interface ImagesParams {
+  query: string;
+  max_results?: number;
+}
+
+export interface ImagesResponse {
+  results: LynceusImageResult[];
+  engine: string;
+  cached?: boolean;
+  credits_charged: number;
+  credits_remaining?: number;
+}
+
 // --- deep research --------------------------------------------------------
 
 export interface ResearchSubmitResponse {
@@ -102,6 +129,7 @@ export class LynceusApiError extends Error {
 
 export interface ApiClient {
   search(p: SearchParams, signal?: AbortSignal): Promise<SearchResponse>;
+  images(p: ImagesParams, signal?: AbortSignal): Promise<ImagesResponse>;
   extract(p: ExtractParams, signal?: AbortSignal): Promise<ExtractResponse>;
   usage(signal?: AbortSignal): Promise<{ credits_remaining?: number }>;
   /** Submit a research job; resolves fast with the job_id. */
@@ -173,6 +201,7 @@ export function createClient(baseUrl?: string, apiKey?: string): ApiClient {
 
   return {
     search: (p, signal) => call<SearchResponse>('/v1/search', p, signal),
+    images: (p, signal) => call<ImagesResponse>('/v1/images', p, signal),
     extract: (p, signal) => call<ExtractResponse>('/v1/extract', p, signal),
     usage: (signal) => call<{ credits_remaining?: number }>('/v1/usage', undefined, signal, 'GET'),
     researchSubmit: (query, signal) => call<ResearchSubmitResponse>('/v1/research', { query }, signal),
