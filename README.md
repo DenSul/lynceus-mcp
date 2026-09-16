@@ -3,14 +3,15 @@
 [![npm](https://img.shields.io/badge/npm-lynceus--mcp-blue)](https://www.npmjs.com/package/lynceus-mcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Web search and URL→Markdown extraction for AI agents. RU-web-first, anti-bot hardened, clean reader-mode output.
+Web search and URL→Markdown extraction for AI agents. RU-web-first: strong on Russian-language and .ru content, with real anti-bot bypass and clean reader-mode output.
 
 - `lyn_search` — live web search (RU-web-first), freshness filter
+- `lyn_images` — image search by text query: direct image URLs, dimensions, source pages (2 credits; cache hits free)
 - `lyn_extract` — URLs → clean Markdown; gets through where plain fetch gets a 403
 - `lyn_research` — deep research: one question → Lynceus plans queries, reads up to 12 pages and synthesizes a cited Markdown report (300 credits; refunded if synthesis fails; async job with live progress)
-
-> **Clients with hard tool-call timeouts (opencode, ~60s):** call `lyn_research` with `wait: false` and poll `GET /v1/research/jobs/<job_id>`. The default blocking mode emits MCP progress notifications every 20s, which resets the timeout in spec-compliant clients (Claude Code, Cursor) — but opencode kills the request regardless, and the job keeps running server-side (credits are held by the job, the report is not lost).
 - `lyn_usage` — remaining credits
+
+> **opencode and other clients with hard ~60s tool timeouts:** call `lyn_research` with `wait: false` and poll `GET /v1/research/jobs/<job_id>`. The default blocking mode sends MCP progress notifications every 20s, which spec-compliant clients (Claude Code, Cursor) treat as activity. opencode kills the request anyway; the job keeps running server-side and the report is not lost.
 
 ## Install
 

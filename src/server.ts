@@ -26,7 +26,7 @@ WHEN TO USE: you need fresh URLs, titles and snippets to answer questions about 
 
 ARGUMENTS:
 - query (required): search query, 1–10 words works best. Natural language questions are fine; keep the locale of the expected answers (query in Russian for Russian content).
-- freshness (optional): time = last ~hour, day = last 24h, week (default), month. Omit for no limit.
+- freshness (optional): time = last ~hour, day = last 24h, week, month. No default — omit for no limit.
 - max_results (optional): 1–20, default 8.
 
 COST: 1 credit per request. Cached results still return full data.
@@ -45,9 +45,9 @@ ARGUMENTS:
 - max_chars (optional): cap the returned body per URL. When the page is longer, the result carries truncated:true and next_offset:N — call again with offset:N to get the continuation (cached, effectively free).
 - offset (optional): skip the first N chars of the document — continuation cursor from a previous next_offset.
 - allow_browser (optional, default TRUE): renders JS-heavy pages in a real browser. ON by default — the service must just work; set false only for the fastest/cheapest path (~faster, no ~15s browser waits).
-- allow_captcha (optional, default TRUE): solves hard bot-walls when needed. ON by default. PREMIUM: +24 credits, charged ONLY when a wall was actually solved — regular pages never pay it. Set false to forbid premium charges.
+- allow_captcha (optional, default TRUE): solves hard bot-walls when needed. ON by default. PREMIUM: +25 credits, charged ONLY when a wall was actually solved — regular pages never pay it. Set false to forbid premium charges.
 
-COST: 1 credit per successfully extracted URL. Cache hits (same URL within the TTL) are free and marked cached:true. Failed URLs are never charged. A captcha solve adds 24 credits on that URL only.
+COST: 1 credit per successfully extracted URL. Cache hits (same URL within the TTL) are free and marked cached:true. Failed URLs are never charged. A captcha solve adds 25 credits on that URL only.
 
 RETURNS: per URL — status (ok / error), http code, char count, then the Markdown body.
 
@@ -146,7 +146,7 @@ export function formatExtract(res: {
 
 export function createServer(api: ApiClient): McpServer {
   const server = new McpServer(
-    { name: 'lynceus', version: '1.5.0' },
+    { name: 'lynceus', version: '1.5.1' },
     {
       instructions:
         'Lynceus gives you live web search (RU-first), image search, URL→Markdown extraction that beats anti-bot walls, and deep research (lyn_research: one question → cited report). Flow: lyn_search to find pages, lyn_extract to read them, lyn_images when the user needs pictures; for synthesis-heavy questions use lyn_research instead of many search+extract rounds. Check lyn_usage if credits run out. ' +
