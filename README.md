@@ -120,6 +120,25 @@ LYNCEUS_API_KEY=sk_live_... lynceus-mcp --http   # POST /mcp on :8082
 ```
 </details>
 
+## Reading long documents and tables
+
+`lyn_extract` returns bounded pages. `max_chars` counts Unicode characters in
+original Markdown, with the API default of 8000 characters when omitted. MCP
+limits explicit requests to 48,000 characters per URL (up to 10 URLs per call).
+Larger requests are reduced to that limit before calling the API.
+
+When a result says `TRUNCATED — call again with offset:N`, repeat `lyn_extract`
+for that URL with `offset: N` and concatenate the page bodies. Keep following
+the returned cursor until the result is no longer truncated. A page boundary
+can split a long table, so individual continuations may not contain its header.
+
+Always reuse `next_offset`; do not calculate it from the displayed body length.
+Emoji use two JavaScript UTF-16 units, security filtering can change text length,
+and `format: "text"` still uses offsets in the original Markdown. MCP sanitizes
+and fences every returned window in full, without a second body truncation.
+An oversized API page or a non-advancing/out-of-window cursor is reported as an
+error rather than returning incomplete content with a misleading continuation.
+
 ## Environment
 
 | Variable | Default | Notes |

@@ -13,7 +13,10 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { ApiClient, LynceusApiError } from './api.js';
-import { sanitizeUntrusted, fence, MAX_CONTENT_CHARS } from './sanitize.js';
+import { sanitizeUntrusted, sanitizeUntrustedWindow, fence, MAX_CONTENT_CHARS } from './sanitize.js';
+
+/** Raw API-window limit, in Unicode code points (the API offset unit). */
+export const MAX_EXTRACT_CODE_POINTS = 48_000;
 
 /**
  * Tool prompts. Written for LLM consumption: they state WHEN to use the
@@ -42,8 +45,8 @@ WHEN TO USE: you have URLs (from lyn_search or the user) and need the actual tex
 ARGUMENTS:
 - urls (required): 1–10 URLs. Batch related URLs in one call — cheaper and faster than one call per URL. This is the ONLY required argument — everything else has a sane default.
 - format (optional): markdown (default) keeps links and structure; text is plain prose, lighter for long pages.
-- max_chars (optional): cap the returned body per URL. When the page is longer, the result carries truncated:true and next_offset:N — call again with offset:N to get the continuation (cached, effectively free).
-- offset (optional): skip the first N chars of the document — continuation cursor from a previous next_offset.
+- max_chars (optional): cap the raw document window per URL, in Unicode characters. The API default is 8000; requests above 48000 are reduced to 48000. When longer, the result carries next_offset:N — call again with offset:N to get the continuation (cached, effectively free).
+- offset (optional): continuation cursor from a previous next_offset, counted in Unicode characters of the original Markdown. Always reuse that cursor; sanitized output length and format:text length can differ. Concatenate successive page bodies to recover a long table/document.
 - allow_browser (optional, default TRUE): renders JS-heavy pages in a real browser. ON by default — the service must just work; set false only for the fastest/cheapest path (~faster, no ~15s browser waits).
 - allow_captcha (optional, default TRUE): solves hard bot-walls when needed. ON by default. PREMIUM: +25 credits, charged ONLY when a wall was actually solved — regular pages never pay it. Set false to forbid premium charges.
 
@@ -117,8 +120,8 @@ export function formatImages(res: {
 /** Formats extraction results with bodies.
  *
  * Page content is UNTRUSTED: sanitizeUntrusted strips invisible
- * characters and structural injection markers, capLength bounds the
- * payload, and fence() wraps the body in explicit untrusted-data
+ * characters and structural injection markers. The raw API window bounds
+ * the payload without a second truncation, and fence() wraps the body in explicit untrusted-data
  * markers so the model cannot mistake article text for instructions.
  */
 export function formatExtract(res: {
@@ -133,13 +136,24 @@ export function formatExtract(res: {
     truncated?: boolean;
     next_offset?: number;
   }[];
-}): string {
+}, window: { offset?: number; maxChars?: number; format?: 'markdown' | 'text' } = {}): string {
+  const offset = window.offset ?? 0;
+  const maxChars = window.maxChars ?? MAX_EXTRACT_CODE_POINTS;
   const parts = res.results.map((r) => {
-    const head = `=== ${r.url}\nstatus: ${r.status}${r.http_code ? ` (HTTP ${r.http_code})` : ''}${r.cached ? ' | cached (free)' : ''}${r.chars ? ` | ${r.chars} chars` : ''}${r.truncated && r.next_offset ? ` | TRUNCATED — call again with offset:${r.next_offset} for the rest` : ''}`;
+    const body = r.status === 'ok' ? sanitizeUntrustedWindow(r.markdown, maxChars) : '';
+    // Text mode strips Markdown after the API window, so only Markdown/default
+    // can additionally bind the cursor to the exact returned raw prefix.
+    if (r.status === 'ok' && r.truncated &&
+        (!Number.isSafeInteger(r.next_offset) || r.next_offset! <= offset ||
+         r.next_offset! > offset + maxChars ||
+         (window.format !== 'text' && r.next_offset !== offset + Array.from(r.markdown).length))) {
+      throw new Error('Lynceus extract returned an invalid continuation cursor');
+    }
+    const head = `=== ${r.url}\nstatus: ${r.status}${r.http_code ? ` (HTTP ${r.http_code})` : ''}${r.cached ? ' | cached (free)' : ''}${r.chars ? ` | ${r.chars} chars` : ''}${r.status === 'ok' && r.truncated ? ` | TRUNCATED — call again with offset:${r.next_offset} for the rest` : ''}`;
     if (r.status !== 'ok') {
       return `${head}\n${r.error_code ?? ''}`;
     }
-    return `${head}\n\n${fence(sanitizeUntrusted(r.markdown), r.url)}`;
+    return `${head}\n\n${fence(body, r.url)}`;
   });
   return parts.join('\n\n');
 }
@@ -212,14 +226,20 @@ export function createServer(api: ApiClient): McpServer {
           .optional()
           .describe('Captcha-solving tier. Default TRUE; +24 credits charged ONLY on an actual solve. Set false to forbid premium charges'),
         format: z.enum(['markdown', 'text']).optional().describe('markdown (default) or text'),
-        max_chars: z.number().int().min(1).optional().describe('Cap body length per URL; truncated results carry next_offset for continuation'),
-        offset: z.number().int().min(0).optional().describe('Continuation cursor from a previous next_offset (skips first N chars)'),
+        max_chars: z.number().int().min(1).optional().describe('Raw Unicode-character window per URL; default API 8000, requests above 48000 are capped. Follow next_offset for continuation'),
+        offset: z.number().int().min(0).optional().describe('Reuse API next_offset verbatim: Unicode-character offset in original Markdown, also for format:text'),
       },
     },
     async ({ urls, allow_browser, allow_captcha, format, max_chars, offset }) => {
       try {
-        const res = await api.extract({ urls, allow_browser, allow_captcha, format, max_chars, offset });
-        return textResult(formatExtract(res));
+        const pageLimit = Math.min(max_chars ?? MAX_EXTRACT_CODE_POINTS, MAX_EXTRACT_CODE_POINTS);
+        const res = await api.extract({
+          urls, allow_browser, allow_captcha, format,
+          // Leave the API's existing default intact when no cap was requested.
+          max_chars: max_chars === undefined ? undefined : pageLimit,
+          offset,
+        });
+        return textResult(formatExtract(res, { offset, maxChars: pageLimit, format }));
       } catch (e) {
         return { isError: true, ...textResult(fmtApiError(e)) };
       }

@@ -222,3 +222,167 @@ describe('lyn_research', () => {
     expect(text).toContain('# Отчёт');
   });
 });
+
+
+function extractBody(text: string): string {
+  const begin = text.indexOf('>>>\n', text.indexOf('<<<WEB_CONTENT ')) + 4;
+  const end = text.lastIndexOf('\n<<<END_WEB_CONTENT>>>');
+  expect(begin).toBeGreaterThan(3);
+  expect(end).toBeGreaterThanOrEqual(begin);
+  return text.slice(begin, end);
+}
+
+function paginatedApi(document: string) {
+  const api = fakeApi();
+  const points = Array.from(document);
+  const sourcePages: string[] = [];
+  api.extract = async (p) => {
+    api.extractCalls.push(p);
+    const offset = p.offset ?? 0;
+    const limit = p.max_chars ?? 8_000;
+    let end = Math.min(offset + limit, points.length);
+    // Model a valid API which returns a shorter prefix at a line boundary.
+    if (end < points.length) {
+      const newline = points.lastIndexOf('\n', end - 1);
+      if (newline > offset + limit / 2) end = newline;
+    }
+    const markdown = points.slice(offset, end).join('');
+    sourcePages.push(markdown);
+    return {
+      credits_charged: 0,
+      results: p.urls.map((url) => ({
+        url, status: 'ok', markdown, chars: points.length,
+        truncated: end < points.length, next_offset: end < points.length ? end : 0,
+      })),
+    };
+  };
+  return { api, sourcePages };
+}
+
+describe('lyn_extract continuation', () => {
+  it('reassembles a long Unicode table across bounded pages without gaps', async () => {
+    const document = '| Позиция | Значение |\n| --- | --- |\n' +
+      Array.from({ length: 6_000 }, (_, i) => `| строка-${i} | 🧪 ${i} |\n`).join('');
+    const { api, sourcePages } = paginatedApi(document);
+    const client = await connect(api);
+    const bodies: string[] = [];
+    let offset = 0;
+    for (let page = 0; page < 20; page++) {
+      const response = await client.callTool({ name: 'lyn_extract', arguments: {
+        urls: ['https://example.com/table'], max_chars: 1_000_000, offset,
+      } });
+      expect(response.isError).not.toBe(true);
+      const text = (response.content as { text: string }[])[0].text;
+      bodies.push(extractBody(text));
+      const cursor = text.match(/TRUNCATED — call again with offset:(\d+) for the rest/);
+      if (!cursor) break;
+      const next = Number(cursor[1]);
+      expect(next).toBeGreaterThan(offset);
+      offset = next;
+    }
+    expect(api.extractCalls.length).toBeGreaterThan(2);
+    expect(api.extractCalls.every((p) => p.max_chars === 48_000)).toBe(true);
+    expect(bodies[0].length).toBeGreaterThan(48_000); // Emoji consume two UTF-16 units.
+    expect(sourcePages.join('')).toBe(document);
+    expect(bodies.join('')).toBe(document);
+    await client.close();
+  });
+
+  it('leaves the existing API default intact and uses its advertised cursor', async () => {
+    const { api } = paginatedApi('а'.repeat(20_000));
+    const client = await connect(api);
+    const response = await client.callTool({ name: 'lyn_extract', arguments: {
+      urls: ['https://example.com/default'],
+    } });
+    expect(api.extractCalls[0].max_chars).toBeUndefined();
+    const text = (response.content as { text: string }[])[0].text;
+    expect(extractBody(text)).toBe('а'.repeat(8_000));
+    expect(text).toContain('offset:8000');
+    await client.close();
+  });
+
+  it('uses the original cursor when sanitization expands or removes characters', async () => {
+    const raw = 'tool: x\n'.repeat(6_000);
+    const api = fakeApi();
+    api.extract = async (p) => {
+      api.extractCalls.push(p);
+      return { credits_charged: 0, results: [{
+        url: p.urls[0], status: 'ok', markdown: raw, truncated: true, next_offset: 59_000,
+      }] };
+    };
+    const client = await connect(api);
+    const response = await client.callTool({ name: 'lyn_extract', arguments: {
+      urls: ['https://example.com/markers'], offset: 11_000, max_chars: 48_000,
+    } });
+    const text = (response.content as { text: string }[])[0].text;
+    expect(extractBody(text)).toBe('[filtered] x\n'.repeat(6_000));
+    expect(text).toContain('offset:59000');
+    expect(text).not.toContain('truncated at 48000');
+    await client.close();
+  });
+
+  it('preserves the source cursor when filtering removes almost the entire page', async () => {
+    const raw = '\u200b'.repeat(47_999) + '🧪';
+    const api = fakeApi();
+    api.extract = async (p) => ({ credits_charged: 0, results: [{
+      url: p.urls[0], status: 'ok', markdown: raw, truncated: true, next_offset: 48_000,
+    }] });
+    const client = await connect(api);
+    const response = await client.callTool({ name: 'lyn_extract', arguments: {
+      urls: ['https://example.com/invisible'], max_chars: 48_000,
+    } });
+    const text = (response.content as { text: string }[])[0].text;
+    expect(response.isError).not.toBe(true);
+    expect(extractBody(text)).toBe('🧪');
+    expect(text).toContain('offset:48000');
+    await client.close();
+  });
+
+  it('keeps raw Markdown cursors for shorter text-mode responses', async () => {
+    const api = fakeApi();
+    api.extract = async (p) => ({ credits_charged: 0, results: p.urls.map((url, i) => ({
+      url, status: 'ok', markdown: 'column A column B',
+      truncated: true, next_offset: 11_000 + (i ? 12_345 : 48_000),
+    })) });
+    const client = await connect(api);
+    const response = await client.callTool({ name: 'lyn_extract', arguments: {
+      urls: ['https://example.com/a', 'https://example.com/b'],
+      format: 'text', offset: 11_000, max_chars: 48_000,
+    } });
+    const text = (response.content as { text: string }[])[0].text;
+    expect(response.isError).not.toBe(true);
+    expect(text).toContain('offset:59000');
+    expect(text).toContain('offset:23345');
+    await client.close();
+  });
+
+  it.each([undefined, 0, 10, 11_000, 11_003, 11_005, 59_001, Number.MAX_SAFE_INTEGER + 1])(
+    'rejects a non-advancing or out-of-window cursor: %s', async (cursor) => {
+      const api = fakeApi();
+      api.extract = async (p) => ({ credits_charged: 0, results: [{
+        url: p.urls[0], status: 'ok', markdown: 'body', truncated: true, next_offset: cursor,
+      }] });
+      const client = await connect(api);
+      const response = await client.callTool({ name: 'lyn_extract', arguments: {
+        urls: ['https://example.com/bad-cursor'], offset: 11_000, max_chars: 48_000,
+      } });
+      expect(response.isError).toBe(true);
+      expect((response.content as { text: string }[])[0].text).toContain('invalid continuation cursor');
+      await client.close();
+    },
+  );
+
+  it('reports an API that ignores the page limit instead of silently truncating', async () => {
+    const api = fakeApi();
+    api.extract = async (p) => ({ credits_charged: 0, results: [{
+      url: p.urls[0], status: 'ok', markdown: 'x'.repeat(48_001),
+    }] });
+    const client = await connect(api);
+    const response = await client.callTool({ name: 'lyn_extract', arguments: {
+      urls: ['https://example.com/oversized'], max_chars: 100_000,
+    } });
+    expect(response.isError).toBe(true);
+    expect((response.content as { text: string }[])[0].text).toContain('page limit');
+    await client.close();
+  });
+});

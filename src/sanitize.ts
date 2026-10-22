@@ -78,9 +78,29 @@ export function capLength(s: string, max = MAX_CONTENT_CHARS): string {
   return s.slice(0, max) + `\n\n[... truncated at ${max} chars by lynceus-mcp]`;
 }
 
-/** Full pipeline for one extracted page. */
+/** Neutralize content without changing its source-window boundaries. */
+function sanitizeContent(s: string): string {
+  return defuseFenceMarkers(defuseMarkers(stripInvisible(s)));
+}
+
+/** Full pipeline for snippets and other results without continuation cursors. */
 export function sanitizeUntrusted(s: string, max = MAX_CONTENT_CHARS): string {
-  return capLength(defuseFenceMarkers(defuseMarkers(stripInvisible(s))), max);
+  return capLength(sanitizeContent(s), max);
+}
+
+/**
+ * Sanitize a bounded API page in full. The API counts Unicode code points,
+ * whereas String.length counts UTF-16 units; filtering can also expand text.
+ * A second output slice would discard content already consumed by next_offset.
+ */
+export function sanitizeUntrustedWindow(s: string, maxCodePoints: number): string {
+  let count = 0;
+  for (const _ of s) {
+    if (++count > maxCodePoints) {
+      throw new Error('Lynceus extract response exceeds the requested Unicode-character page limit');
+    }
+  }
+  return sanitizeContent(s);
 }
 
 /**
