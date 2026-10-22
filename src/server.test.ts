@@ -386,3 +386,42 @@ describe('lyn_extract continuation', () => {
     await client.close();
   });
 });
+
+
+describe('MCP request cancellation', () => {
+  it.each([
+    ['lyn_search', { query: 'query' }, 'search'],
+    ['lyn_images', { query: 'query' }, 'images'],
+    ['lyn_extract', { urls: ['https://example.com'] }, 'extract'],
+    ['lyn_usage', {}, 'usage'],
+  ] as const)('forwards cancellation of %s to its active API request', async (name, args, method) => {
+    const api = fakeApi();
+    let ready!: () => void;
+    const started = new Promise<void>((resolve) => { ready = resolve; });
+    let received: AbortSignal | undefined;
+    const waitForAbort = (signal?: AbortSignal) => new Promise<never>((_resolve, reject) => {
+      received = signal;
+      signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      ready();
+    });
+    if (method === 'usage') api.usage = (signal) => waitForAbort(signal);
+    else if (method === 'search') api.search = (_params, signal) => waitForAbort(signal);
+    else if (method === 'images') api.images = (_params, signal) => waitForAbort(signal);
+    else api.extract = (_params, signal) => waitForAbort(signal);
+    const client = await connect(api);
+    const controller = new AbortController();
+    const request = client.callTool({ name, arguments: args }, undefined, { signal: controller.signal });
+    const cancelled = expect(request).rejects.toBeInstanceOf(Error);
+    try {
+      await started;
+      controller.abort();
+      await cancelled;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(received).toBeDefined();
+      expect(received!.aborted).toBe(true);
+    } finally {
+      controller.abort();
+      await client.close();
+    }
+  });
+});

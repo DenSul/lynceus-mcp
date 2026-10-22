@@ -145,7 +145,13 @@ error rather than returning incomplete content with a misleading continuation.
 |---|---|---|
 | `LYNCEUS_API_KEY` | — | Required |
 | `LYNCEUS_API_URL` | `https://api.lynceus.ru` | Override for self-hosted |
-| `LYNCEUS_TIMEOUT_MS` | `120000` | Per-call timeout |
+| `LYNCEUS_TIMEOUT_MS` | `120000` | Per-attempt timeout, including response body |
+
+MCP cancellation stops the current HTTP request, retry delay, or research poll
+wait promptly. Cancelling a research wait leaves its submitted job running; the
+job ID can still be used to retrieve the result. Research submission retries
+reuse one `Idempotency-Key` to avoid duplicate jobs after an uncertain response;
+a new tool call uses a new key. Other endpoints keep their existing retry policy.
 
 ## License
 

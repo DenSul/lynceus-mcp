@@ -5,6 +5,25 @@
  * Base URL: LYNCEUS_API_URL (default https://api.lynceus.ru).
  */
 
+import { randomUUID } from 'node:crypto';
+
+/** Cancel only the local wait; submitted research jobs keep running remotely. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(signal?.reason ?? new DOMException('The operation was aborted', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 export interface LynceusSearchResult {
   url: string;
   title: string;
@@ -146,55 +165,68 @@ export function createClient(baseUrl?: string, apiKey?: string): ApiClient {
   const timeoutMs = Number(process.env.LYNCEUS_TIMEOUT_MS ?? 120_000);
 
   async function call<T>(path: string, body: unknown, signal?: AbortSignal, method: 'POST' | 'GET' = 'POST'): Promise<T> {
+    signal?.throwIfAborted();
     const maxAttempts = Number(process.env.LYNCEUS_RETRIES ?? 2); // 1 try + 1 retry on retryable failures
+    // A lost submit response must not create a second research job/credit hold.
+    // Other POST routes retain their existing retry semantics: the API caches
+    // terminal errors as well as successes under an idempotency key.
+    const idempotencyKey = method === 'POST' && path === '/v1/research' ? randomUUID() : undefined;
+    const requestBody = JSON.stringify(body);
     let lastErr: LynceusApiError | undefined;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      signal?.throwIfAborted();
       const ac = new AbortController();
       const timer = setTimeout(() => ac.abort(), timeoutMs);
-      if (signal) signal.addEventListener('abort', () => ac.abort(), { once: true });
-      let res: Response;
+      const onAbort = () => ac.abort(signal?.reason);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      let receivedResponse = false;
       try {
-        res = await fetch(base + path, {
+        const res = await fetch(base + path, {
           method,
           headers: {
             'content-type': 'application/json',
             ...(key ? { authorization: `Bearer ${key}` } : {}),
+            ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
           },
-          body: JSON.stringify(body),
+          body: requestBody,
           signal: ac.signal,
         });
+        receivedResponse = true;
+        const text = await res.text();
+        signal?.throwIfAborted();
+        let parsed: any = undefined;
+        try { parsed = text ? JSON.parse(text) : undefined; } catch { /* non-JSON error body */ }
+        if (!res.ok) {
+          const err = parsed?.error;
+          throw new LynceusApiError(
+            res.status,
+            err?.code ?? `http_${res.status}`,
+            err?.message ?? `HTTP ${res.status}`,
+            Boolean(err?.retryable),
+          );
+        }
+        return parsed as T;
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        lastErr = new LynceusApiError(0, 'network_error', `Lynceus unreachable at ${base}: ${msg}`, true);
-        if (attempt < maxAttempts && (signal?.aborted !== true)) {
-          await new Promise((r) => setTimeout(r, 500 * attempt));
-          continue;
+        // Caller cancellation is final, unlike the per-attempt network timeout.
+        signal?.throwIfAborted();
+        if (e instanceof LynceusApiError) {
+          lastErr = e;
+        } else {
+          // Preserve existing body-error behavior for other endpoints. Research
+          // may safely retry an uncertain body because all attempts share a key.
+          if (receivedResponse && !idempotencyKey) throw e;
+          const msg = e instanceof Error ? e.message : String(e);
+          lastErr = new LynceusApiError(0, 'network_error', `Lynceus unreachable at ${base}: ${msg}`, true);
         }
-        throw lastErr;
+        // HTTP failures retry only when the API declares them retryable.
+        if (!lastErr.retryable || attempt >= maxAttempts) throw lastErr;
       } finally {
+        // Keep the deadline through body consumption, and never retain a caller
+        // listener after this attempt (including retries and aborted responses).
         clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
       }
-      const text = await res.text();
-      let parsed: any = undefined;
-      try { parsed = text ? JSON.parse(text) : undefined; } catch { /* non-JSON error body */ }
-      if (!res.ok) {
-        const err = parsed?.error;
-        const apiErr = new LynceusApiError(
-          res.status,
-          err?.code ?? `http_${res.status}`,
-          err?.message ?? `HTTP ${res.status}`,
-          Boolean(err?.retryable),
-        );
-        // Retry only what the API declares retryable (timeout / 502 /
-        // 504); 4xx (auth, credits, validation) fail fast.
-        if (apiErr.retryable && attempt < maxAttempts) {
-          lastErr = apiErr;
-          await new Promise((r) => setTimeout(r, 500 * attempt));
-          continue;
-        }
-        throw apiErr;
-      }
-      return parsed as T;
+      await sleep(500 * attempt, signal);
     }
     throw lastErr ?? new LynceusApiError(0, 'unreachable', 'Lynceus unreachable', true);
   }
@@ -231,7 +263,7 @@ export function createClient(baseUrl?: string, apiKey?: string): ApiClient {
         const last = steps.length ? `${steps[steps.length - 1].kind}: ${steps[steps.length - 1].detail ?? ''}`.slice(0, 80) : undefined;
         onProgress(elapsedS, st.status, last);
       }
-      if (signal?.aborted) return st;
+      signal?.throwIfAborted();
       if (Date.now() > deadline) {
         throw new LynceusApiError(
           0, 'research_timeout',
@@ -239,7 +271,7 @@ export function createClient(baseUrl?: string, apiKey?: string): ApiClient {
           false,
         );
       }
-      await new Promise((r) => setTimeout(r, 5_000));
+      await sleep(5_000, signal);
     }
   }
 

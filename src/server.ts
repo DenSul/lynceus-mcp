@@ -179,9 +179,9 @@ export function createServer(api: ApiClient): McpServer {
         max_results: z.number().int().min(1).max(20).optional().describe('1-20, default 8'),
       },
     },
-    async ({ query, freshness, max_results }) => {
+    async ({ query, freshness, max_results }, extra) => {
       try {
-        const res = await api.search({ query, freshness, max_results });
+        const res = await api.search({ query, freshness, max_results }, extra.signal);
         return textResult(formatSearch(res));
       } catch (e) {
         return { isError: true, ...textResult(fmtApiError(e)) };
@@ -203,9 +203,9 @@ export function createServer(api: ApiClient): McpServer {
         max_results: z.number().int().min(1).max(20).optional().describe('1-20, default 8'),
       },
     },
-    async ({ query, max_results }) => {
+    async ({ query, max_results }, extra) => {
       try {
-        const res = await api.images({ query, max_results });
+        const res = await api.images({ query, max_results }, extra.signal);
         return textResult(formatImages(res));
       } catch (e) {
         return { isError: true, ...textResult(fmtApiError(e)) };
@@ -230,7 +230,7 @@ export function createServer(api: ApiClient): McpServer {
         offset: z.number().int().min(0).optional().describe('Reuse API next_offset verbatim: Unicode-character offset in original Markdown, also for format:text'),
       },
     },
-    async ({ urls, allow_browser, allow_captcha, format, max_chars, offset }) => {
+    async ({ urls, allow_browser, allow_captcha, format, max_chars, offset }, extra) => {
       try {
         const pageLimit = Math.min(max_chars ?? MAX_EXTRACT_CODE_POINTS, MAX_EXTRACT_CODE_POINTS);
         const res = await api.extract({
@@ -238,7 +238,7 @@ export function createServer(api: ApiClient): McpServer {
           // Leave the API's existing default intact when no cap was requested.
           max_chars: max_chars === undefined ? undefined : pageLimit,
           offset,
-        });
+        }, extra.signal);
         return textResult(formatExtract(res, { offset, maxChars: pageLimit, format }));
       } catch (e) {
         return { isError: true, ...textResult(fmtApiError(e)) };
@@ -253,9 +253,9 @@ export function createServer(api: ApiClient): McpServer {
       description: USAGE_PROMPT,
       inputSchema: {},
     },
-    async () => {
+    async (_args, extra) => {
       try {
-        const res = await api.usage();
+        const res = await api.usage(extra.signal);
         return textResult(`Credits remaining: ${res.credits_remaining ?? 'unknown'}`);
       } catch (e) {
         return { isError: true, ...textResult(fmtApiError(e)) };
@@ -274,6 +274,7 @@ export function createServer(api: ApiClient): McpServer {
       },
     },
     async ({ query, wait }, extra) => {
+      let submittedJobId: string | undefined;
       try {
         // Submit is ALWAYS fast; the wait phase below keeps the client
         // alive with progress notifications. A plain blocking call dies
@@ -281,6 +282,7 @@ export function createServer(api: ApiClient): McpServer {
         // while the job keeps running server-side — the caller loses
         // the job_id and the credits (field report 2026-08-27).
         const submitted = await api.researchSubmit(query, extra?.signal);
+        submittedJobId = submitted.job_id;
         if (wait === false) {
           return textResult(formatResearch({ job_id: submitted.job_id, status: 'queued' }));
         }
@@ -297,11 +299,8 @@ export function createServer(api: ApiClient): McpServer {
         // Client cancelled mid-wait: the job KEEPS RUNNING server-side.
         // Hand back the job_id so the caller can poll instead of
         // paying blind — the credit hold is not lost with the call.
-        if (e instanceof Error && extra?.signal?.aborted) {
-          const m = /job (\S+) still/.exec(e.message);
-          if (m) {
-            return textResult(`client cancelled while waiting; job ${m[1]} is still running server-side — poll GET /v1/research/jobs/${m[1]} until done, credits are held by that job`);
-          }
+        if (extra?.signal?.aborted && submittedJobId) {
+          return textResult(`client cancelled while waiting; job ${submittedJobId} is still running server-side — poll GET /v1/research/jobs/${submittedJobId} until done, credits are held by that job`);
         }
         return { isError: true, ...textResult(fmtApiError(e)) };
       }
