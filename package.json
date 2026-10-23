@@ -1,6 +1,6 @@
 {
   "name": "lynceus-mcp",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "MCP server for Lynceus — web search + URL→Markdown extraction for AI agents. RU-web-first.",
   "license": "MIT",
   "type": "module",
@@ -9,7 +9,18 @@
     "lyn-mcp": "dist/cli.js"
   },
   "files": [
-    "dist",
+    "dist/api.js",
+    "dist/api.d.ts",
+    "dist/api.js.map",
+    "dist/cli.js",
+    "dist/cli.d.ts",
+    "dist/cli.js.map",
+    "dist/server.js",
+    "dist/server.d.ts",
+    "dist/server.js.map",
+    "dist/sanitize.js",
+    "dist/sanitize.d.ts",
+    "dist/sanitize.js.map",
     "README.md",
     "LICENSE"
   ],
