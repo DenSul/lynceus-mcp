@@ -10,6 +10,12 @@ Web search and URL→Markdown extraction for AI agents. RU-web-first: strong on 
 - `lyn_extract` — URLs → clean Markdown; gets through where plain fetch gets a 403
 - `lyn_research` — deep research: one question → Lynceus plans queries, reads up to 12 pages and synthesizes a cited Markdown report (300 credits; refunded if synthesis fails; async job with live progress)
 - `lyn_usage` — remaining credits
+- `lyn_wordstat_top` — Yandex Wordstat: popular queries containing a phrase, last 30 days + related queries (1 credit, 6h cache). Demand check for ideas/keywords in the **RU market**
+- `lyn_wordstat_dynamics` — query frequency over time: growth, decline, seasonality; monthly/weekly/daily (1 credit, 6h cache; recent weekly/daily buckets finalize with a ~1–2 week lag)
+- `lyn_wordstat_regions` — demand distribution by cities/regions with affinity index (1 credit, 6h cache)
+- `lyn_wordstat_regions_tree` — region ID/name reference (free)
+
+> **Wordstat scope:** statistics of the Yandex audience (Russian-speaking market) only. Great for validating RU demand; never present these numbers as a US/China/global market estimate.
 
 > **opencode and other clients with hard ~60s tool timeouts:** call `lyn_research` with `wait: false` and poll `GET /v1/research/jobs/<job_id>`. The default blocking mode sends MCP progress notifications every 20s, which spec-compliant clients (Claude Code, Cursor) treat as activity. opencode kills the request anyway; the job keeps running server-side and the report is not lost.
 

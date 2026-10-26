@@ -134,6 +134,70 @@ export interface ResearchParams {
   wait?: boolean;
 }
 
+// --- Yandex Wordstat (search-demand statistics, RU audience) ---------------
+
+export type WordstatDevice = 'all' | 'desktop' | 'phone' | 'tablet';
+
+export interface WordstatTopParams {
+  phrase: string;
+  /** 1-2000, default 30 (compact) */
+  num_phrases?: number;
+  /** region IDs from wordstat_regions_tree (e.g. 225 = Россия, 213 = Москва) */
+  regions?: string[];
+  devices?: WordstatDevice[];
+}
+
+export interface WordstatPhraseCount {
+  phrase: string;
+  count: number;
+}
+
+export interface WordstatTopResponse {
+  total_count: number;
+  results: WordstatPhraseCount[];
+  associations: WordstatPhraseCount[];
+}
+
+export type WordstatPeriod = 'monthly' | 'weekly' | 'daily';
+
+export interface WordstatDynamicsParams {
+  phrase: string;
+  period: WordstatPeriod;
+  /** YYYY-MM-DD or RFC3339; boundaries are snapped to valid period edges */
+  from_date?: string;
+  to_date?: string;
+  regions?: string[];
+  devices?: WordstatDevice[];
+}
+
+export interface WordstatDynamicsResponse {
+  period: WordstatPeriod;
+  from: string;
+  to: string;
+  results: { date: string; count: number; share: number }[];
+}
+
+export interface WordstatRegionsParams {
+  phrase: string;
+  granularity?: 'all' | 'cities' | 'regions';
+  devices?: WordstatDevice[];
+}
+
+export interface WordstatRegionsResponse {
+  granularity: string;
+  results: { region: string; label: string; count: number; share: number; affinity_index: number }[];
+}
+
+export interface WordstatRegionNode {
+  id: string;
+  label: string;
+  children?: WordstatRegionNode[];
+}
+
+export interface WordstatRegionsTreeResponse {
+  regions: WordstatRegionNode[];
+}
+
 export class LynceusApiError extends Error {
   constructor(
     public status: number,
@@ -157,6 +221,10 @@ export interface ApiClient {
   researchWait(jobId: string, signal: AbortSignal | undefined, onProgress?: (elapsedS: number, status: string, lastStep?: string) => void): Promise<ResearchJobState>;
   /** Legacy combined call retained for compatibility with older embedders. */
   research(p: ResearchParams, signal?: AbortSignal): Promise<ResearchJobState>;
+  wordstatTop(p: WordstatTopParams, signal?: AbortSignal): Promise<WordstatTopResponse>;
+  wordstatDynamics(p: WordstatDynamicsParams, signal?: AbortSignal): Promise<WordstatDynamicsResponse>;
+  wordstatRegions(p: WordstatRegionsParams, signal?: AbortSignal): Promise<WordstatRegionsResponse>;
+  wordstatRegionsTree(signal?: AbortSignal): Promise<WordstatRegionsTreeResponse>;
 }
 
 export function createClient(baseUrl?: string, apiKey?: string): ApiClient {
@@ -239,6 +307,10 @@ export function createClient(baseUrl?: string, apiKey?: string): ApiClient {
     researchSubmit: (query, signal) => call<ResearchSubmitResponse>('/v1/research', { query }, signal),
     researchWait: (jobId, signal, onProgress) => runResearchWait(jobId, signal, onProgress),
     research: (p, signal) => runResearch(p, signal),
+    wordstatTop: (p, signal) => call<WordstatTopResponse>('/v1/wordstat/top', p, signal),
+    wordstatDynamics: (p, signal) => call<WordstatDynamicsResponse>('/v1/wordstat/dynamics', p, signal),
+    wordstatRegions: (p, signal) => call<WordstatRegionsResponse>('/v1/wordstat/regions', p, signal),
+    wordstatRegionsTree: (signal) => call<WordstatRegionsTreeResponse>('/v1/wordstat/regions-tree', {}, signal),
   };
 
   // Poll a submitted job to a terminal state. Emits onProgress every

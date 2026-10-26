@@ -88,6 +88,34 @@ function fakeApi(): ApiClient & { searchCalls: any[]; extractCalls: any[]; resea
       }
       return this instanceof Object ? (await this.researchWait('job-test-1', undefined)) : { job_id: 'job-test-1', status: 'done' };
     },
+    async wordstatTop(p) {
+      return {
+        total_count: 388,
+        results: [{ phrase: 'хостинг для базы данных', count: 91 }],
+        associations: [{ phrase: 'файл hosts', count: 15394 }],
+      };
+    },
+    async wordstatDynamics(p) {
+      return {
+        period: p.period,
+        from: '2026-07-01T00:00:00Z',
+        to: '2026-09-30T00:00:00Z',
+        results: [
+          { date: '2026-07-01T00:00:00Z', count: 223771, share: 0.002 },
+          { date: '2026-08-01T00:00:00Z', count: 210071, share: 0.0018 },
+          { date: '2026-09-01T00:00:00Z', count: 191548, share: 0.0016 },
+        ],
+      };
+    },
+    async wordstatRegions(p) {
+      return {
+        granularity: p.granularity ?? 'cities',
+        results: [{ region: '213', label: 'Россия / Москва и область / Москва', count: 26, share: 0.000004, affinity_index: 155.98 }],
+      };
+    },
+    async wordstatRegionsTree() {
+      return { regions: [{ id: '225', label: 'Россия', children: [{ id: '213', label: 'Москва' }] }] };
+    },
   };
 }
 
@@ -105,7 +133,10 @@ describe('lynceus MCP server', () => {
     const client = await connect(fakeApi());
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
-    expect(names).toEqual(['lyn_search', 'lyn_images', 'lyn_extract', 'lyn_usage', 'lyn_research']);
+    expect(names).toEqual([
+      'lyn_search', 'lyn_images', 'lyn_extract', 'lyn_usage', 'lyn_research',
+      'lyn_wordstat_top', 'lyn_wordstat_dynamics', 'lyn_wordstat_regions', 'lyn_wordstat_regions_tree',
+    ]);
     for (const t of tools) {
       if (t.name === 'lyn_usage' || t.name === 'lyn_research') continue;
       expect(t.description!.length).toBeGreaterThan(150); // prompts must be substantial
@@ -422,6 +453,64 @@ describe('MCP request cancellation', () => {
     } finally {
       controller.abort();
       await client.close();
+    }
+  });
+});
+
+describe('wordstat tools', () => {
+  it('lyn_wordstat_top round-trips and formats', async () => {
+    const client = await connect(fakeApi());
+    const res = await client.callTool({ name: 'lyn_wordstat_top', arguments: { phrase: 'хостинг баз данных' } });
+    const text = (res.content as { type: 'text'; text: string }[])[0].text;
+    expect(text).toContain('total queries (30 days, any word order): 388');
+    expect(text).toContain('хостинг для базы данных: 91');
+    expect(text).toContain('related queries (associations)');
+  });
+
+  it('lyn_wordstat_dynamics shows the trend', async () => {
+    const client = await connect(fakeApi());
+    const res = await client.callTool({ name: 'lyn_wordstat_dynamics', arguments: { phrase: 'хостинг', period: 'monthly' } });
+    const text = (res.content as { type: 'text'; text: string }[])[0].text;
+    expect(text).toContain('period: monthly');
+    expect(text).toContain('first→last change: -14%');
+    expect(text).toContain('2026-09-01');
+  });
+
+  it('lyn_wordstat_regions labels rows with the region path', async () => {
+    const client = await connect(fakeApi());
+    const res = await client.callTool({ name: 'lyn_wordstat_regions', arguments: { phrase: 'хостинг' } });
+    const text = (res.content as { type: 'text'; text: string }[])[0].text;
+    expect(text).toContain('Россия / Москва и область / Москва');
+    expect(text).toContain('affinity=156');
+  });
+
+  it('lyn_wordstat_regions_tree renders the indented tree', async () => {
+    const client = await connect(fakeApi());
+    const res = await client.callTool({ name: 'lyn_wordstat_regions_tree', arguments: {} });
+    const text = (res.content as { type: 'text'; text: string }[])[0].text;
+    expect(text).toContain('Россия [id=225]');
+    expect(text).toMatch(/ {2}Москва \[id=213\]/);
+  });
+
+  it('surfaces wordstat_range_unavailable as an error result', async () => {
+    const api = fakeApi();
+    api.wordstatDynamics = async () => {
+      const err = new Error('data not available yet') as Error & { status: number; code: string; retryable: boolean };
+      err.status = 400; err.code = 'wordstat_range_unavailable'; err.retryable = false;
+      throw err;
+    };
+    const client = await connect(api);
+    const res = await client.callTool({ name: 'lyn_wordstat_dynamics', arguments: { phrase: 'x', period: 'weekly' } });
+    expect(res.isError).toBe(true);
+    const text = (res.content as { type: 'text'; text: string }[])[0].text;
+    expect(text).toContain('wordstat_range_unavailable');
+  });
+
+  it('tool descriptions carry the RU-audience scope warning', async () => {
+    const client = await connect(fakeApi());
+    const { tools } = await client.listTools();
+    for (const t of tools.filter((t) => t.name.startsWith('lyn_wordstat'))) {
+      expect(t.description).toContain('NEVER present Wordstat numbers as an estimate of US, China or global market size');
     }
   });
 });
